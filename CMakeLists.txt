@@ -1,14 +1,15 @@
 cmake_minimum_required(VERSION 3.7)
-project(NativeCode)
+project(SOFA_Spatializer_NativeCode)
 
 set(CMAKE_CXX_STANDARD 11)
 
 set(SOURCE_FILES
-        Plugin_Gain.cpp
         AudioPluginInterface.h
         AudioPluginUtil.cpp
         AudioPluginUtil.h
-        PluginList.h Plugin_SofaSpatializer.cpp)
+        Plugin_Gain.cpp
+        Plugin_SofaSpatializer.cpp
+        PluginList.h)
 
 add_library(SofaSpatializer SHARED ${SOURCE_FILES})
 
