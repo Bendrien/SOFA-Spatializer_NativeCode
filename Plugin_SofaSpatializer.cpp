@@ -1,10 +1,9 @@
-// Include the Native Audio Plugin SDK header
 #include "AudioPluginUtil.h"
 
 // Our plugin will be encapsulated within a namespace
 // This namespace is later used to indicate that we
 // want to include this plugin in the build with PluginList.h
-namespace Plugin_Gain {
+namespace Plugin_SofaSpatializer {
 
     /////////////////////////////////////////
     /// plugin logic
@@ -33,7 +32,7 @@ namespace Plugin_Gain {
                           "Gain Multiplier", // The parameter label shown in the Unity editor
                           "",                // The units (ex. dB, Hz, cm, s, etc)
                           0.0f,              // Minimum parameter value
-                         10.0f,              // Maximum parameter value
+                          10.0f,              // Maximum parameter value
                           1.0f,              // Default parameter value
                           1.0f,              // Display scale, Unity editor shows actualValue*displayScale
                           1.0f,              // Display exponent, in case you want a slider operating on an exponential scale in the editor
