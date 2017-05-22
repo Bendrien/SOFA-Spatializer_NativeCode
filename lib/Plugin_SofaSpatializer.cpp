@@ -1,4 +1,5 @@
 #include "AudioPluginUtil.h"
+#include "FFTConvolver/FFTConvolver.h"
 
 // Our plugin will be encapsulated within a namespace
 // This namespace is later used to indicate that we
@@ -48,6 +49,7 @@ namespace Plugin_SofaSpatializer {
     struct EffectData
     {
         float p[P_NUM]; // Parameters
+        fftconvolver::FFTConvolver* convolver;
     };
 
     // UNITY_AUDIODSP_RESULT is defined as `int`
@@ -56,12 +58,20 @@ namespace Plugin_SofaSpatializer {
     // This callback is invoked by Unity when the plugin is loaded
     UNITY_AUDIODSP_RESULT UNITY_AUDIODSP_CALLBACK CreateCallback(UnityAudioEffectState* state)
     {
-        EffectData* effectdata = new EffectData;    // Create a new pointer to the struct defined earlier
-        memset(effectdata, 0, sizeof(EffectData));  // Quickly fill memory location with zeros
-        effectdata->p[P_GAIN] = 1.0f;               // Initialize effectdata with default parameter value(s)
-        state->effectdata = effectdata;             // Add our effectdata pointer to the state so we can reach it in other callbacks
+        EffectData* data = new EffectData;    // Create a new pointer to the struct defined earlier
+        memset(data, 0, sizeof(EffectData));  // Quickly fill memory location with zeros
+        data->p[P_GAIN] = 1.0f;               // Initialize effectdata with default parameter value(s)
+        state->effectdata = data;             // Add our effectdata pointer to the state so we can reach it in other callbacks
         // Use the callback we defined earlier to initialize the parameters
-        InitParametersFromDefinitions(InternalRegisterEffectDefinition, effectdata->p);
+        InitParametersFromDefinitions(InternalRegisterEffectDefinition, data->p);
+
+        data->convolver = new fftconvolver::FFTConvolver[2];
+        for (int i = 0; i < 2; ++i) {
+            fftconvolver::FFTConvolver& convolver = data->convolver[i];
+            std::vector<fftconvolver::Sample> ir(state->dspbuffersize*2, fftconvolver::Sample(0.0));
+            ir[ir.size()-1] = 1.0;
+            convolver.init(state->dspbuffersize, &ir[0], ir.size());
+        }
         return UNITY_AUDIODSP_OK;                   // All is well!
     }
 
@@ -109,9 +119,11 @@ namespace Plugin_SofaSpatializer {
             {
                 // Write the sample to the buffer
                 unsigned int j = n * outchannels + i;
-                outbuffer[j] = data->p[P_GAIN] * inbuffer[j];
+                inbuffer[j] *= data->p[P_GAIN]; //* inbuffer[j];
             }
         }
+
+        data->convolver[0].process(inbuffer,outbuffer,length);
 
         return UNITY_AUDIODSP_OK;
     }
