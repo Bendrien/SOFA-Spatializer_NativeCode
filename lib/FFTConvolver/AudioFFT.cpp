@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstring>
 
+// #define AUDIOFFT_FFTW3
 
 #if defined(AUDIOFFT_APPLE_ACCELERATE)
   #define AUDIOFFT_APPLE_ACCELERATE_USED
