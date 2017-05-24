@@ -4,23 +4,23 @@ project(SOFA_Spatializer_NativeCode)
 set(CMAKE_CXX_STANDARD 11)
 
 set(SOURCE_FILES
-        lib/AudioPluginInterface.h
-        lib/AudioPluginUtil.cpp
-        lib/AudioPluginUtil.h
-        lib/Plugin_Gain.cpp
-        lib/Plugin_SofaSpatializer.cpp
-        lib/PluginList.h
-        lib/FFTConvolver/AudioFFT.cpp
-        lib/FFTConvolver/AudioFFT.h
-        lib/FFTConvolver/TwoStageFFTConvolver.cpp
-        lib/FFTConvolver/TwoStageFFTConvolver.h
-        lib/FFTConvolver/FFTConvolver.cpp
-        lib/FFTConvolver/FFTConvolver.h
-        lib/FFTConvolver/Utilities.cpp
-        lib/FFTConvolver/Utilities.h
+        src/AudioPluginInterface.h
+        src/AudioPluginUtil.cpp
+        src/AudioPluginUtil.h
+        src/Plugin_Gain.cpp
+        src/Plugin_SofaSpatializer.cpp
+        src/PluginList.h
+        src/FFTConvolver/AudioFFT.cpp
+        src/FFTConvolver/AudioFFT.h
+        src/FFTConvolver/TwoStageFFTConvolver.cpp
+        src/FFTConvolver/TwoStageFFTConvolver.h
+        src/FFTConvolver/FFTConvolver.cpp
+        src/FFTConvolver/FFTConvolver.h
+        src/FFTConvolver/Utilities.cpp
+        src/FFTConvolver/Utilities.h
         )
 
-INCLUDE_DIRECTORIES(dep/include)
+INCLUDE_DIRECTORIES(dep/inc)
 LINK_DIRECTORIES(dep/lib)
 add_library(SofaSpatializer SHARED ${SOURCE_FILES})
 TARGET_LINK_LIBRARIES(SofaSpatializer fftw3f-3 mysofa)
