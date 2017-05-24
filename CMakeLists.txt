@@ -37,3 +37,8 @@ endif()
 #########################################
 ### Libraries
 #########################################
+
+
+INCLUDE_DIRECTORIES(dep/include)
+LINK_DIRECTORIES(dep/lib)
+TARGET_LINK_LIBRARIES(SofaSpatializer libfftw3f-3 libmysofa)
