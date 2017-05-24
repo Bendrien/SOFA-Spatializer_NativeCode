@@ -17,7 +17,7 @@ namespace Plugin_SofaSpatializer {
     /// Utilities
     ///////////////////////////////////////
 
-    void _Interleave(float* buf, size_t len, size_t width) {
+    void _interleave(float *buf, size_t len, size_t width) {
         auto half = len / 2;
         auto step = width * 2;
         for (int i = 0; i < half; i += step) {
@@ -28,16 +28,16 @@ namespace Plugin_SofaSpatializer {
         }
 
         if (step <= half) {
-            _Interleave(&buf[width], len - step, step);
+            _interleave(&buf[width], len - step, step);
         }
     }
 
-    void Interleave(float* buf, size_t len) {
+    void interleave(float *buf, size_t len) {
         if (len < 4) { return; }
-        _Interleave(&buf[1], len - 2, 1);
+        _interleave(&buf[1], len - 2, 1);
     }
 
-    void _Deinterleave(float* buf, size_t len) {
+    void _deinterleave(float *buf, size_t len) {
         auto half = len / 2;
         for (int i = 0; i < half; i += 2) {
             std::swap(buf[i], buf[i + half]);
@@ -45,14 +45,14 @@ namespace Plugin_SofaSpatializer {
 
         if (half >= 2) {
             size_t newLen = half;
-            _Deinterleave(buf, newLen);
-            _Deinterleave(&buf[half + 1], newLen);
+            _deinterleave(buf, newLen);
+            _deinterleave(&buf[half + 1], newLen);
         }
     }
 
-    void Deinterleave(float* buf, size_t len) {
+    void deinterleave(float *buf, size_t len) {
         if (len < 4) { return; }
-        _Deinterleave(&buf[1], len - 2);
+        _deinterleave(&buf[1], len - 2);
     }
 
     /////////////////////////////////////////
@@ -188,13 +188,13 @@ namespace Plugin_SofaSpatializer {
 //            }
 //        }
 
-//        size_t sliceLen = length / outchannels;
-//        //Deinterleave(inbuffer, sliceLen);
-//        for (int i = 0; i < outchannels; ++i) {
-//            auto frameIndex = i * sliceLen;
-//            data->convolver[i].process(inbuffer, &outbuffer[frameIndex], sliceLen);
-//            //Interleave(&outbuffer[frameIndex], sliceLen);
-//        }
+        size_t sliceLen = length / outchannels;
+        deinterleave(inbuffer, sliceLen);
+        for (int i = 0; i < outchannels; ++i) {
+            auto frameIndex = i * sliceLen;
+            data->convolver[i].process(inbuffer, &outbuffer[frameIndex], sliceLen);
+            interleave(&outbuffer[frameIndex], sliceLen);
+        }
 
 //        size_t sliceLen = length / outchannels;
 //        float in [sliceLen];
