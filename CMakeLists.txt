@@ -12,13 +12,18 @@ set(SOURCE_FILES
         lib/PluginList.h
         lib/FFTConvolver/AudioFFT.cpp
         lib/FFTConvolver/AudioFFT.h
+        lib/FFTConvolver/TwoStageFFTConvolver.cpp
+        lib/FFTConvolver/TwoStageFFTConvolver.h
         lib/FFTConvolver/FFTConvolver.cpp
         lib/FFTConvolver/FFTConvolver.h
         lib/FFTConvolver/Utilities.cpp
         lib/FFTConvolver/Utilities.h
         )
 
+INCLUDE_DIRECTORIES(dep/include)
+LINK_DIRECTORIES(dep/lib)
 add_library(SofaSpatializer SHARED ${SOURCE_FILES})
+TARGET_LINK_LIBRARIES(SofaSpatializer fftw3f-3 mysofa)
 
 
 #########################################
@@ -32,13 +37,3 @@ set_target_properties(SofaSpatializer PROPERTIES PREFIX "AudioPlugin")
 if (EXISTS "../../Assets")
     set(LIBRARY_OUTPUT_PATH "../../Assets/Plugins/x86_64")
 endif()
-
-
-#########################################
-### Libraries
-#########################################
-
-
-INCLUDE_DIRECTORIES(dep/include)
-LINK_DIRECTORIES(dep/lib)
-TARGET_LINK_LIBRARIES(SofaSpatializer libfftw3f-3 libmysofa)

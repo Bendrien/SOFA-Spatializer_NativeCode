@@ -1,8 +1,12 @@
 #include "AudioPluginUtil.h"
 #include "FFTConvolver/FFTConvolver.h"
+#include "FFTConvolver/TwoStageFFTConvolver.h"
 
 #include <utility>
-//#include "../dep/include/mysofa.h"
+
+#include <mysofa.h>
+
+//#include <ATK/Special/ConvolutionFilter.h>
 
 // Our plugin will be encapsulated within a namespace
 // This namespace is later used to indicate that we
@@ -107,18 +111,28 @@ namespace Plugin_SofaSpatializer {
         memset(data, 0, sizeof(EffectData));  // Quickly fill memory location with zeros
         data->p[P_GAIN] = 1.0;                // Initialize effectdata with default parameter value(s)
 
+        freopen("debug.txt", "a", stdout);
+        printf("Debug:\n");
+        printf("Buffersize: %d\n", state->dspbuffersize);
+
+        int filter_length;
+        int err;
+        struct MYSOFA_EASY *hrtf;
+
+        hrtf = mysofa_open("hrtf0.sofa", state->samplerate, &filter_length, &err);
+
         data->convolver = new fftconvolver::FFTConvolver[2];
         for (int i = 0; i < 2; ++i) {
-
             fftconvolver::FFTConvolver& convolver = data->convolver[i];
+//            if (i == 0)
+//                convolver.init(state->dspbuffersize, &leftIR[0], filter_length);
+//            else
+//                convolver.init(state->dspbuffersize, &rightIR[0], filter_length);
+
             std::vector<fftconvolver::Sample> ir(state->dspbuffersize*2, fftconvolver::Sample(0.0));
             ir[0] = 1.0;
             convolver.init(state->dspbuffersize, &ir[0], ir.size());
         }
-
-        freopen("debug.txt", "a", stdout);
-        printf("Debug:\n");
-        printf("Buffersize: %d\n", state->dspbuffersize);
 
         state->effectdata = data;             // Add our effectdata pointer to the state so we can reach it in other callbacks
         // Use the callback we defined earlier to initialize the parameters
@@ -182,19 +196,18 @@ namespace Plugin_SofaSpatializer {
 //            //Interleave(&outbuffer[frameIndex], sliceLen);
 //        }
 
-        size_t sliceLen = length / outchannels;
-        float in [sliceLen];
-        float out [sliceLen];
-        for (int i = 0; i < sliceLen; ++i) {
-            in[i] = inbuffer[i*outchannels];
-        }
-
-        for (int i = 0; i < outchannels; ++i) {
-            data->convolver[i].process(in, out, sliceLen);
-            for (int j = 0; j < sliceLen; ++j) {
-                outbuffer[j*outchannels+i] = out[j];
-            }
-        }
+//        size_t sliceLen = length / outchannels;
+//        float in [sliceLen];
+//        float out [sliceLen];
+//        for (int i = 0; i < sliceLen; ++i) {
+//            in[i] = inbuffer[i*outchannels];
+//        }
+//        for (int i = 0; i < outchannels; ++i) {
+//            data->convolver[i].process(in, out, sliceLen);
+//            for (int j = 0; j < sliceLen; ++j) {
+//                outbuffer[j*outchannels+i] = out[j];
+//            }
+//        }
 
         return UNITY_AUDIODSP_OK;
     }
