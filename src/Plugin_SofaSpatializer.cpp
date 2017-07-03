@@ -17,42 +17,22 @@ namespace Plugin_SofaSpatializer {
     /// Utilities
     ///////////////////////////////////////
 
-    void _interleave(float *buf, size_t len, size_t width) {
-        auto half = len / 2;
-        auto step = width * 2;
-        for (int i = 0; i < half; i += step) {
-            for (int j = 0; j < width; ++j) {
-                auto k = i + j;
-                std::swap(buf[k], buf[k + half]);
+    static void deinterleaveData(float* in, float* out, int len, int num_ch) {
+        for (int ch = 0; ch < num_ch; ++ch) {
+            int offset = ch * len;
+            for (int i = 0; i < len; ++i) {
+                out[offset + i] = in[ch + i*2];
             }
         }
-
-        if (step <= half) {
-            _interleave(&buf[width], len - step, step);
-        }
     }
 
-    void interleave(float *buf, size_t len) {
-        if (len < 4) { return; }
-        _interleave(&buf[1], len - 2, 1);
-    }
-
-    void _deinterleave(float *buf, size_t len) {
-        auto half = len / 2;
-        for (int i = 0; i < half; i += 2) {
-            std::swap(buf[i], buf[i + half]);
+    static void interleaveData(float* in, float* out, int len, int num_ch) {
+        for (int ch = 0; ch < num_ch; ++ch) {
+            int offset = ch * len;
+            for (int i = 0; i < len; ++i) {
+                out[ch + i*2] = in[offset + i];
+            }
         }
-
-        if (half >= 2) {
-            size_t newLen = half;
-            _deinterleave(buf, newLen);
-            _deinterleave(&buf[half + 1], newLen);
-        }
-    }
-
-    void deinterleave(float *buf, size_t len) {
-        if (len < 4) { return; }
-        _deinterleave(&buf[1], len - 2);
     }
 
     /////////////////////////////////////////
@@ -88,6 +68,7 @@ namespace Plugin_SofaSpatializer {
                           1.0f,              // Display exponent, in case you want a slider operating on an exponential scale in the editor
                           P_GAIN);           // The index of the parameter in question; use the enum value
 
+        definition.flags |= UnityAudioEffectDefinitionFlags_IsSpatializer;
         return P_NUM;
     }
 
@@ -121,21 +102,18 @@ namespace Plugin_SofaSpatializer {
 
         hrtf = mysofa_open("hrtf0.sofa", state->samplerate, &filter_length, &err);
 
+        int len = state->dspbuffersize*2;
         data->convolver = new fftconvolver::FFTConvolver[2];
         for (int i = 0; i < 2; ++i) {
             fftconvolver::FFTConvolver& convolver = data->convolver[i];
-//            if (i == 0)
-//                convolver.init(state->dspbuffersize, &leftIR[0], filter_length);
-//            else
-//                convolver.init(state->dspbuffersize, &rightIR[0], filter_length);
-
-            std::vector<fftconvolver::Sample> ir(state->dspbuffersize*2, fftconvolver::Sample(0.0));
+            std::vector<fftconvolver::Sample> ir(len, fftconvolver::Sample(0.0));
             ir[0] = 1.0;
             convolver.init(state->dspbuffersize, &ir[0], ir.size());
         }
 
-        state->effectdata = data;             // Add our effectdata pointer to the state so we can reach it in other callbacks
-        // Use the callback we defined earlier to initialize the parameters
+        // Add our effectdata pointer to the state so we can reach it in other callbacks
+        state->effectdata = data;
+
         InitParametersFromDefinitions(InternalRegisterEffectDefinition, data->p);
         return UNITY_AUDIODSP_OK;
     }
@@ -173,41 +151,17 @@ namespace Plugin_SofaSpatializer {
             }
         }
 
+
         // Grab the EffectData struct we created in CreateCallback
-        EffectData *data = state->GetEffectData<EffectData>();
+        auto *data = state->GetEffectData<EffectData>();
+        auto spatializationdata = state->spatializerdata;
 
-//        // For each sample going to the output buffer
-//        for(unsigned int n = 0; n < length; ++n)
-//        {
-//            // For each channel of the sample
-//            for(int i = 0; i < outchannels; ++i)
-//            {
-//                // Write the sample to the buffer
-//                unsigned int j = n * outchannels + i;
-//                inbuffer[j] *= data->p[P_GAIN]; //* inbuffer[j];
-//            }
-//        }
-
-        size_t sliceLen = length / outchannels;
-        deinterleave(inbuffer, sliceLen);
-        for (int i = 0; i < outchannels; ++i) {
-            auto frameIndex = i * sliceLen;
-            data->convolver[i].process(inbuffer, &outbuffer[frameIndex], sliceLen);
-            interleave(&outbuffer[frameIndex], sliceLen);
-        }
-
-//        size_t sliceLen = length / outchannels;
-//        float in [sliceLen];
-//        float out [sliceLen];
-//        for (int i = 0; i < sliceLen; ++i) {
-//            in[i] = inbuffer[i*outchannels];
-//        }
-//        for (int i = 0; i < outchannels; ++i) {
-//            data->convolver[i].process(in, out, sliceLen);
-//            for (int j = 0; j < sliceLen; ++j) {
-//                outbuffer[j*outchannels+i] = out[j];
-//            }
-//        }
+        float in_deinterleaved[length * inchannels];
+        float out_deinterleaved[length * inchannels];
+        deinterleaveData(inbuffer, in_deinterleaved, length, inchannels);
+        data->convolver[0].process(&in_deinterleaved[0], &out_deinterleaved[0], length); // left channel
+        data->convolver[1].process(&in_deinterleaved[length], &out_deinterleaved[length], length); // right channel
+        interleaveData(out_deinterleaved, outbuffer, length, outchannels);
 
         return UNITY_AUDIODSP_OK;
     }
