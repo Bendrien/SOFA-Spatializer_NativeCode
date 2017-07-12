@@ -17,6 +17,55 @@ namespace Plugin_SofaSpatializer {
     /// Utilities
     ///////////////////////////////////////
 
+    const unsigned MAX_SOFA_FILES = 1;
+    const unsigned CONVOLVERS = 2;
+
+    class SofaContainer {
+    public:
+        MYSOFA_HRTF* hrtfs[MAX_SOFA_FILES];
+        fftconvolver::FFTConvolver* convolver[CONVOLVERS];
+        unsigned buffersize;
+        bool is_initialized = false;
+        float last;
+
+        void init(unsigned samplerate, unsigned buffersize) {
+            if (!is_initialized) {
+                this->buffersize = buffersize;
+
+                int err;
+
+                // load sofa files
+                hrtfs[0] = mysofa_load("WIEb_S00_R01.sofa", &err);
+                //if (samplerate != hrtfs[0]->DataSamplingRate.values[0]) { mysofa_resample(hrtfs[0], (float)samplerate); }
+
+                // init convolver
+                this->setIr(0);
+
+                this->is_initialized = true;
+            }
+        }
+
+        void setIr(unsigned ir) {
+            for (int i = 0; i < CONVOLVERS; ++i) {
+                convolver[i] = new fftconvolver::FFTConvolver();
+                convolver[i]->init(buffersize,
+                                   &this->hrtfs[0]->DataIR.values[this->hrtfs[0]->N * (ir + i)],
+                                   this->hrtfs[0]->N);
+            }
+        }
+
+        void free() {
+            if (is_initialized) {
+                for (int i = 0; i < sizeof(this->hrtfs)/sizeof(*this->hrtfs); ++i) {
+                    mysofa_free(hrtfs[i]);
+                }
+                this->is_initialized = false;
+            }
+        }
+    };
+
+    static SofaContainer sofaContainer;
+
     static void deinterleaveData(float* in, float* out, int len, int num_ch) {
         for (int ch = 0; ch < num_ch; ++ch) {
             int offset = ch * len;
@@ -57,17 +106,15 @@ namespace Plugin_SofaSpatializer {
     int InternalRegisterEffectDefinition(UnityAudioEffectDefinition& definition)
     {
         definition.paramdefs = new UnityAudioParameterDefinition [P_NUM];
-
         RegisterParameter(definition,        // EffectDefinition object passed to us
                           "Gain Multiplier", // The parameter label shown in the Unity editor
                           "",                // The units (ex. dB, Hz, cm, s, etc)
                           0.0f,              // Minimum parameter value
-                          10.0f,              // Maximum parameter value
+                          10.0f,             // Maximum parameter value
                           1.0f,              // Default parameter value
                           1.0f,              // Display scale, Unity editor shows actualValue*displayScale
                           1.0f,              // Display exponent, in case you want a slider operating on an exponential scale in the editor
                           P_GAIN);           // The index of the parameter in question; use the enum value
-
         definition.flags |= UnityAudioEffectDefinitionFlags_IsSpatializer;
         return P_NUM;
     }
@@ -79,7 +126,6 @@ namespace Plugin_SofaSpatializer {
     struct EffectData
     {
         float p[P_NUM]; // Parameters
-        fftconvolver::FFTConvolver* convolver;
     };
 
     // UNITY_AUDIODSP_RESULT is defined as `int`
@@ -91,45 +137,29 @@ namespace Plugin_SofaSpatializer {
         EffectData* data = new EffectData;    // Create a new pointer to the struct defined earlier
         memset(data, 0, sizeof(EffectData));  // Quickly fill memory location with zeros
         data->p[P_GAIN] = 1.0;                // Initialize effectdata with default parameter value(s)
-
-        freopen("debug.txt", "a", stdout);
-        printf("Debug:\n");
-        printf("Buffersize: %d\n", state->dspbuffersize);
-
-        int filter_length;
-        int err;
-        struct MYSOFA_EASY *hrtf;
-
-        hrtf = mysofa_open("hrtf0.sofa", state->samplerate, &filter_length, &err);
-
-        int len = state->dspbuffersize*2;
-        data->convolver = new fftconvolver::FFTConvolver[2];
-        for (int i = 0; i < 2; ++i) {
-            fftconvolver::FFTConvolver& convolver = data->convolver[i];
-            std::vector<fftconvolver::Sample> ir(len, fftconvolver::Sample(0.0));
-            ir[0] = 1.0;
-            convolver.init(state->dspbuffersize, &ir[0], ir.size());
-        }
+        InitParametersFromDefinitions(InternalRegisterEffectDefinition, data->p);
 
         // Add our effectdata pointer to the state so we can reach it in other callbacks
         state->effectdata = data;
 
-        InitParametersFromDefinitions(InternalRegisterEffectDefinition, data->p);
+        sofaContainer.init(state->samplerate, state->dspbuffersize);
+        return UNITY_AUDIODSP_OK;
+    }
+
+    // This callback is invoked by Unity when the plugin is unloaded
+    UNITY_AUDIODSP_RESULT UNITY_AUDIODSP_CALLBACK ReleaseCallback(UnityAudioEffectState* state)
+    {
+        //sofaContainer.free();
+
+        // Grab the EffectData pointer we added earlier in CreateCallback
+        EffectData *data = state->GetEffectData<EffectData>();
+        delete data; // Cleanup
         return UNITY_AUDIODSP_OK;
     }
 
     /////////////////////////////////////////
     /// Soundprocessing
     ///////////////////////////////////////
-
-    // This callback is invoked by Unity when the plugin is unloaded
-    UNITY_AUDIODSP_RESULT UNITY_AUDIODSP_CALLBACK ReleaseCallback(UnityAudioEffectState* state)
-    {
-        // Grab the EffectData pointer we added earlier in CreateCallback
-        EffectData *data = state->GetEffectData<EffectData>();
-        delete data; // Cleanup
-        return UNITY_AUDIODSP_OK;
-    }
 
     // ProcessCallback gets called as long as the plugin is loaded
     // This includes when the editor is not in play mode!
@@ -141,26 +171,25 @@ namespace Plugin_SofaSpatializer {
             int inchannels,               // The number of channels the incoming signal uses
             int outchannels)              // The number of channels the outgoing signal uses
     {
-        {
-            auto flags = state->flags;
-            if (inchannels != 2 || outchannels != 2 || !(flags & UnityAudioEffectStateFlags_IsPlaying) ||
-                (flags & (UnityAudioEffectStateFlags_IsMuted | UnityAudioEffectStateFlags_IsPaused)))
-            {
-                memcpy(outbuffer, inbuffer, length * outchannels * sizeof(float));
-                return UNITY_AUDIODSP_OK;
-            }
+        if (!sofaContainer.is_initialized) {
+            memcpy(outbuffer, inbuffer, length * outchannels * sizeof(float));
+            return UNITY_AUDIODSP_OK;
         }
 
+        auto data = state->GetEffectData<EffectData>();
+        if (sofaContainer.last != data->p[P_GAIN]) {
+            unsigned i = rand() % sofaContainer.hrtfs[0]->R;
+            sofaContainer.setIr(i);
 
-        // Grab the EffectData struct we created in CreateCallback
-        auto *data = state->GetEffectData<EffectData>();
-        auto spatializationdata = state->spatializerdata;
+            sofaContainer.last = i;
+            data->p[P_GAIN] = i;
+        };
 
         float in_deinterleaved[length * inchannels];
         float out_deinterleaved[length * inchannels];
         deinterleaveData(inbuffer, in_deinterleaved, length, inchannels);
-        data->convolver[0].process(&in_deinterleaved[0], &out_deinterleaved[0], length); // left channel
-        data->convolver[1].process(&in_deinterleaved[length], &out_deinterleaved[length], length); // right channel
+        (*sofaContainer.convolver[0]).process(&in_deinterleaved[0], &out_deinterleaved[0], length); // left channel
+        (*sofaContainer.convolver[1]).process(&in_deinterleaved[length], &out_deinterleaved[length], length); // right channel
         interleaveData(out_deinterleaved, outbuffer, length, outchannels);
 
         return UNITY_AUDIODSP_OK;
@@ -179,6 +208,7 @@ namespace Plugin_SofaSpatializer {
             return UNITY_AUDIODSP_ERR_UNSUPPORTED;
         }
         data->p[index] = value; // Set the parameter to the value the editor gave us
+
         return UNITY_AUDIODSP_OK;
     }
 
