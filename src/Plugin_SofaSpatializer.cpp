@@ -23,34 +23,19 @@ namespace Plugin_SofaSpatializer {
     class SofaContainer {
     public:
         MYSOFA_HRTF* hrtfs[MAX_SOFA_FILES];
-        fftconvolver::FFTConvolver* convolver[CONVOLVERS];
-        unsigned buffersize;
         bool is_initialized = false;
-        float last;
 
-        void init(unsigned samplerate, unsigned buffersize) {
+        void init(unsigned samplerate) {
             if (!is_initialized) {
-                this->buffersize = buffersize;
-
                 int err;
 
                 // load sofa files
                 hrtfs[0] = mysofa_load("WIEb_S00_R01.sofa", &err);
+
+                // resample if samplerates doesent match (Warning: long coputationtime!)
                 //if (samplerate != hrtfs[0]->DataSamplingRate.values[0]) { mysofa_resample(hrtfs[0], (float)samplerate); }
 
-                // init convolver
-                this->setIr(0);
-
                 this->is_initialized = true;
-            }
-        }
-
-        void setIr(unsigned ir) {
-            for (int i = 0; i < CONVOLVERS; ++i) {
-                convolver[i] = new fftconvolver::FFTConvolver();
-                convolver[i]->init(buffersize,
-                                   &this->hrtfs[0]->DataIR.values[this->hrtfs[0]->N * (ir + i)],
-                                   this->hrtfs[0]->N);
             }
         }
 
@@ -101,6 +86,16 @@ namespace Plugin_SofaSpatializer {
         // However, we don't use it as an actual parameter
     };
 
+    // Define a struct that will hold the plugin's state
+    // Our noise plugin is very simple, so we're only interested
+    // in keeping track of the single parameter we have: gain
+    struct EffectData
+    {
+        float p[P_NUM]; // Parameters
+        fftconvolver::FFTConvolver* convolver[CONVOLVERS];
+        float last;
+    };
+
     // This is a callback we'll have the SDK invoke when initializing parameters
     // Instantiate the parameter details here
     int InternalRegisterEffectDefinition(UnityAudioEffectDefinition& definition)
@@ -119,15 +114,6 @@ namespace Plugin_SofaSpatializer {
         return P_NUM;
     }
 
-
-    // Define a struct that will hold the plugin's state
-    // Our noise plugin is very simple, so we're only interested
-    // in keeping track of the single parameter we have: gain
-    struct EffectData
-    {
-        float p[P_NUM]; // Parameters
-    };
-
     // UNITY_AUDIODSP_RESULT is defined as `int`
     // UNITY_AUDIODSP_CALLBACK is defined as nothing
     // So behind the scenes, the function signature is really `int CreateCallback(UnityAudioEffectState* state)`
@@ -139,10 +125,16 @@ namespace Plugin_SofaSpatializer {
         data->p[P_GAIN] = 1.0;                // Initialize effectdata with default parameter value(s)
         InitParametersFromDefinitions(InternalRegisterEffectDefinition, data->p);
 
+        sofaContainer.init(state->samplerate);
+        auto const len = sofaContainer.hrtfs[0]->N;
+        for (int i = 0; i < CONVOLVERS; ++i) {
+            data->convolver[i] = new fftconvolver::FFTConvolver();
+            data->convolver[i]->init(state->dspbuffersize, &sofaContainer.hrtfs[0]->DataIR.values[len * i], len);
+        }
+
         // Add our effectdata pointer to the state so we can reach it in other callbacks
         state->effectdata = data;
 
-        sofaContainer.init(state->samplerate, state->dspbuffersize);
         return UNITY_AUDIODSP_OK;
     }
 
@@ -177,19 +169,23 @@ namespace Plugin_SofaSpatializer {
         }
 
         auto data = state->GetEffectData<EffectData>();
-        if (sofaContainer.last != data->p[P_GAIN]) {
-            unsigned i = rand() % sofaContainer.hrtfs[0]->R;
-            sofaContainer.setIr(i);
-
-            sofaContainer.last = i;
-            data->p[P_GAIN] = i;
+        if (data->last != data->p[P_GAIN]) {
+            unsigned rnd = rand() % sofaContainer.hrtfs[0]->R;
+            auto const len = sofaContainer.hrtfs[0]->N;
+            for (int i = 0; rnd < CONVOLVERS; ++rnd) {
+                data->convolver[rnd]->init(state->dspbuffersize, &sofaContainer.hrtfs[0]->DataIR.values[len * rnd], len);
+            }
+            data->last = rnd;
+            data->p[P_GAIN] = rnd;
         };
 
         float in_deinterleaved[length * inchannels];
         float out_deinterleaved[length * inchannels];
         deinterleaveData(inbuffer, in_deinterleaved, length, inchannels);
-        (*sofaContainer.convolver[0]).process(&in_deinterleaved[0], &out_deinterleaved[0], length); // left channel
-        (*sofaContainer.convolver[1]).process(&in_deinterleaved[length], &out_deinterleaved[length], length); // right channel
+        // left channel
+        (*data->convolver[0]).process(&in_deinterleaved[0], &out_deinterleaved[0], length);
+        // right channel
+        (*data->convolver[1]).process(&in_deinterleaved[length], &out_deinterleaved[length], length);
         interleaveData(out_deinterleaved, outbuffer, length, outchannels);
 
         return UNITY_AUDIODSP_OK;
