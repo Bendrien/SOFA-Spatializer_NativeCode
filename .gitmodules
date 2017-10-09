@@ -1,0 +1,3 @@
+[submodule "src/FFTConvolver"]
+	path = src/FFTConvolver
+	url = git@github.com:Bendrien/FFTConvolver.git

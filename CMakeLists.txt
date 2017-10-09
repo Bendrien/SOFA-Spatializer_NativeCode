@@ -18,7 +18,7 @@ set(SOURCE_FILES
         src/FFTConvolver/FFTConvolver.h
         src/FFTConvolver/Utilities.cpp
         src/FFTConvolver/Utilities.h
-        )
+        src/FFTConvolver/BinauralFFTConvolver.cpp src/FFTConvolver/BinauralFFTConvolver.h)
 
 INCLUDE_DIRECTORIES(dep/inc)
 LINK_DIRECTORIES(dep/lib)
