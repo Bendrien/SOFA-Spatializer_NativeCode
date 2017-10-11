@@ -12,24 +12,13 @@
 // in the build with PluginList.h
 namespace Plugin_SofaSpatializer {
 
-    /// Communication with unity
-    static float current_direction[3];
+    // There cant be more sofa files loaded then this number
+    static const unsigned MAX_SOFA_FILES = 10;
+    static const int DIR_DIM = 3;
+
     static int err;
 
-    extern "C" __declspec(dllexport) void WriteDirection(float *array, int length) {
-        for (int i = 0; i < length; ++i) {
-            current_direction[i] = array[i];
-        }
-    }
-
-    extern "C" __declspec(dllexport) int GetErr() {
-        return err;
-    }
-
     /// LibMySofa
-    // There cant be more sofa files loaded then this number
-    const unsigned MAX_SOFA_FILES = 10;
-
     class SofaContainer {
     public:
         ~SofaContainer() {
@@ -47,7 +36,9 @@ namespace Plugin_SofaSpatializer {
         MYSOFA_LOOKUP* lookups[MAX_SOFA_FILES];
         MYSOFA_NEIGHBORHOOD* neighborhoods[MAX_SOFA_FILES];
         int errs[MAX_SOFA_FILES];
+        float dirs[DIR_DIM * MAX_SOFA_FILES];
         bool is_initialized = false;
+
 
         void init(unsigned samplerate) {
             if (!is_initialized) {
@@ -78,6 +69,29 @@ namespace Plugin_SofaSpatializer {
         }
     };
 
+    static SofaContainer sofa;
+
+    /// Communication with unity
+    extern "C" __declspec(dllexport) void write_direction(float *array, int index) {
+
+        if (index < 0 || index >= MAX_SOFA_FILES) {
+            return;
+        }
+
+        const int offset = index * DIR_DIM;
+        for (int i = 0; i < DIR_DIM; ++i) {
+            sofa.dirs[offset + i] = array[i];
+        }
+    }
+
+    extern "C" __declspec(dllexport) int get_err() {
+        return err;
+    }
+
+    extern "C" __declspec(dllexport) int get_max_sofa_files() {
+        return MAX_SOFA_FILES;
+    }
+
     /// Utilities
     static void deinterleave_data(float *in, float *out, int len, int num_ch) {
         for (int ch = 0; ch < num_ch; ++ch) {
@@ -100,8 +114,6 @@ namespace Plugin_SofaSpatializer {
     /////////////////////////////////////////
     /// plugin logic
     ///////////////////////////////////////
-
-    static SofaContainer sofa;
 
     // Use an enum for the plugin parameters
     // we want Unity to have access to
@@ -209,7 +221,8 @@ namespace Plugin_SofaSpatializer {
         data->current_hrtf = new_hrtf;
 
         // Get the index of the nearest HRTF in relation to the direction
-        data->current_ir = mysofa_lookup(sofa.lookups[data->current_hrtf], current_direction);
+        data->current_ir = mysofa_lookup(sofa.lookups[data->current_hrtf],
+                                         &sofa.dirs[data->current_hrtf * DIR_DIM]);
         // Transform to the first stereo pair index
         if (data->current_ir % 2 != 0) { data->current_ir -= 1; }
 
@@ -254,7 +267,8 @@ namespace Plugin_SofaSpatializer {
         data->convolver->process(&in_deinterleaved[0], &out_deinterleaved[0], &out_deinterleaved[length], length);
 
         // Get the index of the nearest HRTF in relation to the direction
-        int nearest_ir = mysofa_lookup(sofa.lookups[data->current_hrtf], current_direction);
+        int nearest_ir = mysofa_lookup(sofa.lookups[data->current_hrtf],
+                                       &sofa.dirs[data->current_hrtf * DIR_DIM]);
         // Transform to the first stereo pair index
         if (nearest_ir % 2 != 0) { nearest_ir -= 1; }
         if (data->current_ir != nearest_ir) {
