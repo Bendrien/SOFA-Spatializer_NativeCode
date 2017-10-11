@@ -27,7 +27,8 @@ namespace Plugin_SofaSpatializer {
     }
 
     /// LibMySofa
-    const unsigned MAX_SOFA_FILES = 2;
+    // There cant be more sofa files loaded then this number
+    const unsigned MAX_SOFA_FILES = 10;
 
     class SofaContainer {
     public:
@@ -38,7 +39,7 @@ namespace Plugin_SofaSpatializer {
                     mysofa_lookup_free(lookups[i]);
                     mysofa_neighborhood_free(neighborhoods[i]);
                 }
-                //this->is_initialized = false;
+                this->is_initialized = false;
             }
         }
 
@@ -53,19 +54,25 @@ namespace Plugin_SofaSpatializer {
                 this->is_initialized = true;
 
                 // load sofa files
-                // todo: parse specific folder in deterministic order
                 for (int i = 0; i < MAX_SOFA_FILES; ++i) {
                     char filename[50];
                     sprintf_s(filename, sizeof(filename), "Assets/Sofa/hrtf%u.sofa", i);
                     hrtfs[i] = mysofa_load(filename, &errs[i]);
 
-                    // generate lookup data
+                    if (errs[i] != MYSOFA_OK) {
+                        continue;
+                    }
+
+                    // Convert to cartesian, initialize the look up
                     mysofa_tocartesian(hrtfs[i]);
                     lookups[i] = mysofa_lookup_init(hrtfs[i]);
                     neighborhoods[i] = mysofa_neighborhood_init(hrtfs[i], lookups[i]);
 
                     // resample if samplerates doesent match (Warning: long coputationtime!)
                     //if (samplerate != hrtfs[i]->DataSamplingRate.values[i]) { mysofa_resample(hrtfs[i], (float)samplerate); }
+
+                    /// TODO: perfomance can be improved by precomputing hrtfs into the frequency domain
+                    /// and let the convolver be initializable with them
                 }
             }
         }
@@ -117,35 +124,16 @@ namespace Plugin_SofaSpatializer {
         // Editor parameters
         float p[P_NUM];
         // Index of the associated sofafile
-        int current_file = 0;
+        int current_hrtf = 0;
         // Length of the impusle response in samples (assumed to stay the same for each file)
         size_t ir_len = 0;
         // index of the current impulse response
         int current_ir = 0;
 
+        bool is_initialized = false;
+
         fftconvolver::BinauralFFTConvolver* convolver;
     };
-
-    void InitConvolver(UnityAudioEffectState* state) {
-        // Grab the EffectData pointer we added earlier in CreateCallback
-        auto *data = state->GetEffectData<EffectData>();
-
-        // Convert editor param to index
-        data->current_file = (int)data->p[P_SOFA_SELECTOR] - 1;
-
-        data->ir_len = sofa.hrtfs[data->current_file]->N;
-
-        // check for left right
-        if (data->current_ir % 2 == 0) {
-            data->convolver->init(state->dspbuffersize,
-                                  &sofa.hrtfs[data->current_file]->DataIR.values[data->ir_len * data->current_ir],
-                                  &sofa.hrtfs[data->current_file]->DataIR.values[data->ir_len * (data->current_ir + 1)], data->ir_len);
-        } else {
-            data->convolver->init(state->dspbuffersize,
-                                  &sofa.hrtfs[data->current_file]->DataIR.values[data->ir_len * data->current_ir - 1],
-                                  &sofa.hrtfs[data->current_file]->DataIR.values[data->ir_len * data->current_ir], data->ir_len);
-        }
-    }
 
     // This is a callback we'll have the SDK invoke when initializing parameters
     // Instantiate the parameter details here
@@ -155,9 +143,9 @@ namespace Plugin_SofaSpatializer {
         RegisterParameter(definition,        // EffectDefinition object passed to us
                           "Sofa Selector",   // The parameter label shown in the Unity editor
                           "",                // The units (ex. dB, Hz, cm, s, etc)
-                          1.0f,              // Minimum parameter value
-                          MAX_SOFA_FILES,    // Maximum parameter value
-                          1.0f,              // Default parameter value
+                          0.0f,              // Minimum parameter value
+                          MAX_SOFA_FILES-1,  // Maximum parameter value
+                          0.0f,              // Default parameter value
                           1.0f,              // Display scale, Unity editor shows actualValue*displayScale
                           1.0f,              // Display exponent, in case you want a slider operating on an exponential scale in the editor
                           P_SOFA_SELECTOR);           // The index of the parameter in question; use the enum value
@@ -179,14 +167,10 @@ namespace Plugin_SofaSpatializer {
         auto data = new EffectData;
         // Quickly fill memory location with zeros
         memset(data, 0, sizeof(EffectData));
-        // Initialize effectdata with default parameter value(s)
-        data->p[P_SOFA_SELECTOR] = 1.0;
-        InitParametersFromDefinitions(InternalRegisterEffectDefinition, data->p);
-
         data->convolver = new fftconvolver::BinauralFFTConvolver();
-        // Add our effectdata pointer to the state so we can reach it in other callbacks
+        // Add the effectdata pointer to the state so it can be reached in other callbacks
         state->effectdata = data;
-        InitConvolver(state);
+        InitParametersFromDefinitions(InternalRegisterEffectDefinition, data->p);
 
         return UNITY_AUDIODSP_OK;
     }
@@ -206,6 +190,38 @@ namespace Plugin_SofaSpatializer {
     /// Soundprocessing
     ///////////////////////////////////////
 
+    void init_convolver(UnityAudioEffectState *state) {
+        // Grab the EffectData pointer we added earlier in CreateCallback
+        auto *data = state->GetEffectData<EffectData>();
+
+        if (data->is_initialized) {
+            return;
+        }
+
+        // Convert editor param into an index
+        auto new_hrtf = (int)data->p[P_SOFA_SELECTOR];
+
+        if (new_hrtf < 0 || new_hrtf >= MAX_SOFA_FILES ||
+                sofa.errs[new_hrtf] != MYSOFA_OK) {
+            return;
+        }
+
+        data->current_hrtf = new_hrtf;
+
+        // Get the index of the nearest HRTF in relation to the direction
+        data->current_ir = mysofa_lookup(sofa.lookups[data->current_hrtf], current_direction);
+        // Transform to the first stereo pair index
+        if (data->current_ir % 2 != 0) { data->current_ir -= 1; }
+
+        data->ir_len = sofa.hrtfs[data->current_hrtf]->N;
+
+        data->convolver->init(state->dspbuffersize,
+                              &sofa.hrtfs[data->current_hrtf]->DataIR.values[data->current_ir * data->ir_len],
+                              &sofa.hrtfs[data->current_hrtf]->DataIR.values[(data->current_ir + 1) * data->ir_len],
+                              data->ir_len);
+        data->is_initialized = true;
+    }
+
     // ProcessCallback gets called as long as the plugin is loaded
     // This includes when the editor is not in play mode!
     UNITY_AUDIODSP_RESULT UNITY_AUDIODSP_CALLBACK ProcessCallback(
@@ -216,46 +232,59 @@ namespace Plugin_SofaSpatializer {
             int inchannels,               // The number of channels the incoming signal uses
             int outchannels)              // The number of channels the outgoing signal uses
     {
+
         if (!sofa.is_initialized) {
             memcpy(outbuffer, inbuffer, length * outchannels * sizeof(float));
             return UNITY_AUDIODSP_OK;
         }
 
+        init_convolver(state);
         auto data = state->GetEffectData<EffectData>();
 
-        // prepare data
+        if (!data->is_initialized) {
+            memcpy(outbuffer, inbuffer, length * outchannels * sizeof(float));
+            return UNITY_AUDIODSP_OK;
+        }
+
+        // Prepare data
         // since we have an mono input we just have to deinterleave one channel
         float in_deinterleaved[length];
         deinterleave_data(inbuffer, in_deinterleaved, length, 1);
         float out_deinterleaved[length * inchannels];
         data->convolver->process(&in_deinterleaved[0], &out_deinterleaved[0], &out_deinterleaved[length], length);
 
-        // Get the index to the nearest HRTF direction
-        int nearest = mysofa_lookup(sofa.lookups[data->current_file], current_direction);
+        // Get the index of the nearest HRTF in relation to the direction
+        int nearest_ir = mysofa_lookup(sofa.lookups[data->current_hrtf], current_direction);
         // Transform to the first stereo pair index
-        if (nearest % 2 != 0) { nearest -= 1; }
-        if (data->current_ir != nearest) {
-            InitConvolver(state);
-            float out_deinterleavedNew[length * inchannels];
-            data->convolver->process(&out_deinterleavedNew[0], &out_deinterleavedNew[length], length);
+        if (nearest_ir % 2 != 0) { nearest_ir -= 1; }
+        if (data->current_ir != nearest_ir) {
+            // Init new impulse response
+            data->convolver->init(state->dspbuffersize,
+                                  &sofa.hrtfs[data->current_hrtf]->DataIR.values[data->current_ir * data->ir_len],
+                                  &sofa.hrtfs[data->current_hrtf]->DataIR.values[(data->current_ir + 1) * data->ir_len],
+                                  data->ir_len);
+            float out_deinterleaved_new[length * inchannels];
+            data->convolver->process(&out_deinterleaved_new[0], &out_deinterleaved_new[length], length);
 
-            // Equal power crossfade between both frames
+            // Equal power crossfade between the old and new frame mixed into the out buffer
             for (int i = 0; i < length; ++i) {
                 float ratio = (float)(i+1) / (float)length;
-                float volumeNew = sqrtf(ratio);
-                float volumeOld = 1 - volumeNew;
+                float volume_new = sqrtf(ratio);
+                float volume_old = 1 - volume_new;
 
                 for (int j = 0; j < inchannels; ++j) {
                     size_t index = (length*j) + i;
-                    out_deinterleaved[index] *= volumeOld;
-                    out_deinterleaved[index] += out_deinterleavedNew[index] * volumeNew;
+                    out_deinterleaved[index] *= volume_old;
+                    out_deinterleaved[index] += out_deinterleaved_new[index] * volume_new;
                 }
             }
 
-            data->current_ir = nearest;
+            data->current_ir = nearest_ir;
         } //*/
 
+        //err = sofa.errs[data->current_hrtf];
         err = data->current_ir;
+        //err = data->current_hrtf;
         interleave_data(out_deinterleaved, outbuffer, length, outchannels);
         return UNITY_AUDIODSP_OK;
     }
@@ -272,7 +301,10 @@ namespace Plugin_SofaSpatializer {
         if (index >= P_NUM) {
             return UNITY_AUDIODSP_ERR_UNSUPPORTED;
         }
-        data->p[index] = value; // Set the parameter to the value the editor gave us
+        if (index == P_SOFA_SELECTOR && (int)value != data->current_hrtf) {
+            data->is_initialized = false;
+        }
+        data->p[index] = value;
 
         return UNITY_AUDIODSP_OK;
     }
